@@ -5583,19 +5583,19 @@ lib.resource.add('hterm/images/icon-96', 'image/png;base64',
 );
 
 lib.resource.add('hterm/concat/date', 'text/plain',
-'Thu, 21 Jun 2018 08:45:46 +0000'
+'Mon, 25 Jun 2018 04:53:35 +0000'
 );
 
 lib.resource.add('hterm/changelog/version', 'text/plain',
-'1.79'
+'1.80'
 );
 
 lib.resource.add('hterm/changelog/date', 'text/plain',
-'2018-06-20'
+'2018-06-22'
 );
 
 lib.resource.add('hterm/git/HEAD', 'text/plain',
-'71348ab356506a9c88514a7ee0bc6c3dd696ffad'
+'334625aa41dee698241c5dd745f58a672a8a8e0d'
 );
 
 
@@ -8732,7 +8732,7 @@ hterm.PreferenceManager.categoryDefinitions = [
   { id: hterm.PreferenceManager.categories.Extensions,
     text: 'Extensions'},
   { id: hterm.PreferenceManager.categories.Miscellaneous,
-    text: 'Misc.'}
+    text: 'Miscellaneous'}
 ];
 
 
@@ -8955,6 +8955,10 @@ hterm.PreferenceManager.defaultPreferences = {
      // this shouldn't cause problems.
      'NCURSES_NO_UTF8_ACS': '1',
      'TERM': 'xterm-256color',
+     // Set this env var that a bunch of mainstream terminal emulators set to
+     // indicate we support true colors.
+     // https://gist.github.com/XVilka/8346728
+     'COLORTERM': 'truecolor',
    },
    'value',
    'The initial set of environment variables, as an object.'],
@@ -8976,6 +8980,14 @@ hterm.PreferenceManager.defaultPreferences = {
   'foreground-color':
   [hterm.PreferenceManager.categories.Appearance, 'rgb(240, 240, 240)', 'color',
    'The foreground color for text with no other color attributes.'],
+
+  'hide-mouse-while-typing':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'tristate',
+   'Whether to automatically hide the mouse cursor when typing. ' +
+   'By default, autodetect whether the platform/OS handles this.\n' +
+   '\n' +
+   'Note: Some operating systems may override this setting and thus you ' +
+   'might not be able to always disable it.'],
 
   'home-keys-scroll':
   [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
@@ -10185,7 +10197,10 @@ hterm.Screen.prototype.expandSelectionWithWordBreakMatches_ =
   if (!range || range.toString().match(/\s/))
     return;
 
-  var row = this.getLineStartRow_(this.getXRowAncestor_(range.startContainer));
+  const rowElement = this.getXRowAncestor_(range.startContainer);
+  if (!rowElement)
+    return;
+  const row = this.getLineStartRow_(rowElement);
   if (!row)
     return;
 
@@ -10723,9 +10738,77 @@ hterm.ScrollPort.prototype.decorate = function(div) {
 
   doc.body.addEventListener('keydown', this.onBodyKeyDown_.bind(this));
 
+  // Add buttons to make accessible scrolling through terminal history work
+  // well. These are positioned off-screen until they are selected, at which
+  // point they are moved on-screen.
+  const scrollButtonHeight = 30;
+  const scrollButtonBorder = 1;
+  const scrollButtonTotalHeight = scrollButtonHeight + 2 * scrollButtonBorder;
+  const scrollButtonStyle = `right: 0px;
+                             position:fixed;
+                             z-index: 1;
+                             text-align: center;
+                             cursor: pointer;
+                             height: ${scrollButtonHeight}px;
+                             width: 110px;
+                             line-height: ${scrollButtonHeight}px;
+                             border-width: ${scrollButtonBorder}px;
+                             border-style: solid;
+                             font-weight: bold;`;
+  // Note: we use a <div> rather than a <button> because we don't want it to be
+  // focusable. If it's focusable this interferes with the contenteditable
+  // focus.
+  this.scrollUpButton_ = this.document_.createElement('div');
+  this.scrollUpButton_.id = 'hterm:a11y:page-up';
+  this.scrollUpButton_.innerText = hterm.msg('BUTTON_PAGE_UP', [], 'Page up');
+  this.scrollUpButton_.setAttribute('role', 'button');
+  this.scrollUpButton_.style.cssText = scrollButtonStyle;
+  this.scrollUpButton_.style.top = -scrollButtonTotalHeight + 'px';
+  this.scrollUpButton_.addEventListener('click', () => {
+    const i = this.getTopRowIndex();
+    this.scrollRowToTop(i - this.visibleRowCount + 1);
+  });
+
+  this.scrollDownButton_ = this.document_.createElement('div');
+  this.scrollDownButton_.id = 'hterm:a11y:page-down';
+  this.scrollDownButton_.innerText =
+      hterm.msg('BUTTON_PAGE_DOWN', [], 'Page down');
+  this.scrollDownButton_.setAttribute('role', 'button');
+  this.scrollDownButton_.style.cssText = scrollButtonStyle;
+  this.scrollDownButton_.style.bottom = -scrollButtonTotalHeight + 'px';
+  this.scrollDownButton_.addEventListener('click', () => {
+    const i = this.getTopRowIndex();
+    this.scrollRowToTop(i + this.visibleRowCount - 1);
+  });
+
+  // We only allow the scroll buttons to display after a delay, otherwise the
+  // page up button can flash onto the screen during the intial change in focus.
+  // This seems to be because it is the first element inside the <x-screen>
+  // element, which will get focussed on page load.
+  this.allowScrollButtonsToDisplay_ = false;
+  setTimeout(() => { this.allowScrollButtonsToDisplay_ = true; }, 500);
   this.document_.addEventListener('selectionchange', () => {
     this.selection.sync();
+    if (!this.allowScrollButtonsToDisplay_)
+      return;
+    const selection = this.document_.getSelection();
+    let selectedElement;
+    if (selection.anchorNode && selection.anchorNode.parentElement) {
+      selectedElement = selection.anchorNode.parentElement;
+    }
+    if (selectedElement == this.scrollUpButton_) {
+      this.scrollUpButton_.style.top = '0px';
+    } else {
+      this.scrollUpButton_.style.top = -scrollButtonTotalHeight + 'px';
+    }
+    if (selectedElement == this.scrollDownButton_) {
+      this.scrollDownButton_.style.bottom = '0px';
+    } else {
+      this.scrollDownButton_.style.bottom = -scrollButtonTotalHeight + 'px';
+    }
   });
+
+  this.screen_.appendChild(this.scrollUpButton_);
 
   // This is the main container for the fixed rows.
   this.rowNodes_ = doc.createElement('div');
@@ -10737,6 +10820,8 @@ hterm.ScrollPort.prototype.decorate = function(div) {
       '-webkit-user-select: text;' +
       '-moz-user-select: text;');
   this.screen_.appendChild(this.rowNodes_);
+
+  this.screen_.appendChild(this.scrollDownButton_);
 
   // Two nodes to hold offscreen text during the copy event.
   this.topSelectBag_ = doc.createElement('x-select-bag');
@@ -10877,6 +10962,8 @@ hterm.ScrollPort.prototype.getForegroundColor = function() {
 
 hterm.ScrollPort.prototype.setForegroundColor = function(color) {
   this.screen_.style.color = color;
+  this.scrollUpButton_.style.backgroundColor = color;
+  this.scrollDownButton_.style.backgroundColor = color;
 };
 
 hterm.ScrollPort.prototype.getBackgroundColor = function() {
@@ -10885,6 +10972,8 @@ hterm.ScrollPort.prototype.getBackgroundColor = function() {
 
 hterm.ScrollPort.prototype.setBackgroundColor = function(color) {
   this.screen_.style.backgroundColor = color;
+  this.scrollUpButton_.style.color = color;
+  this.scrollDownButton_.style.color = color;
 };
 
 hterm.ScrollPort.prototype.setBackgroundImage = function(image) {
@@ -11182,6 +11271,21 @@ hterm.ScrollPort.prototype.scheduleRedraw = function() {
 };
 
 /**
+ * Update the state of scroll up/down buttons.
+ *
+ * If the viewport is at the top or bottom row of output, these buttons will
+ * be made transparent and clicking them shouldn't scroll any further.
+ */
+hterm.ScrollPort.prototype.updateScrollButtonState_ = function() {
+  const setButton = (button, disabled) => {
+    button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    button.style.opacity = disabled ? 0.5 : 1;
+  };
+  setButton(this.scrollUpButton_, this.getTopRowIndex() == 0);
+  setButton(this.scrollDownButton_, this.isScrolledEnd);
+};
+
+/**
  * Redraw the current hterm.ScrollPort based on the current scrollbar position.
  *
  * When redrawing, we are careful to make sure that the rows that start or end
@@ -11213,6 +11317,8 @@ hterm.ScrollPort.prototype.redraw_ = function() {
 
   this.isScrolledEnd = (
     this.getTopRowIndex() + this.visibleRowCount >= this.lastRowCount_);
+
+  this.updateScrollButtonState_();
 };
 
 /**
@@ -12046,6 +12152,11 @@ hterm.Terminal = function(opt_profileId) {
   // True if we should override mouse event reporting to allow local selection.
   this.defeatMouseReports_ = false;
 
+  // Whether to auto hide the mouse cursor when typing.
+  this.setAutomaticMouseHiding();
+  // Timer to keep mouse visible while it's being used.
+  this.mouseHideDelay_ = null;
+
   // Terminal bell sound.
   this.bellAudio_ = this.document_.createElement('audio');
   this.bellAudio_.id = 'hterm:bell-audio';
@@ -12372,6 +12483,10 @@ hterm.Terminal.prototype.setProfile = function(profileId, opt_callback) {
 
     'foreground-color': function(v) {
       terminal.setForegroundColor(v);
+    },
+
+    'hide-mouse-while-typing': function(v) {
+      terminal.setAutomaticMouseHiding(v);
     },
 
     'home-keys-scroll': function(v) {
@@ -13410,6 +13525,8 @@ hterm.Terminal.prototype.decorate = function(div) {
   screenNode.addEventListener('mousemove', onMouse);
   this.scrollPort_.onScrollWheel = onMouse;
 
+  screenNode.addEventListener('keydown', this.onKeyboardActivity_.bind(this));
+
   screenNode.addEventListener(
       'focus', this.onFocusChange_.bind(this, true));
   // Listen for mousedown events on the screenNode as in FF the focus
@@ -13448,7 +13565,7 @@ hterm.Terminal.prototype.decorate = function(div) {
        '}' +
        '.uri-node:hover {' +
        '  text-decoration: underline;' +
-       '  cursor: pointer;' +
+       '  cursor: var(--hterm-mouse-cursor-pointer), pointer;' +
        '}' +
        '@keyframes blink {' +
        '  from { opacity: 1.0; }' +
@@ -13461,7 +13578,12 @@ hterm.Terminal.prototype.decorate = function(div) {
        '  animation-timing-function: ease-in-out;' +
        '  animation-direction: alternate;' +
        '}');
-  this.document_.head.appendChild(style);
+  // Insert this stock style as the first node so that any user styles will
+  // override w/out having to use !important everywhere.  The rules above mix
+  // runtime variables with default ones designed to be overridden by the user,
+  // but we can wait for a concrete case from the users to determine the best
+  // way to split the sheet up to before & after the user-css settings.
+  this.document_.head.insertBefore(style, this.document_.head.firstChild);
 
   this.cursorNode_ = this.document_.createElement('div');
   this.cursorNode_.id = 'hterm:terminal-cursor';
@@ -15153,10 +15275,13 @@ hterm.Terminal.prototype.getSelectionText = function() {
   if (selection.isCollapsed)
     return null;
 
-
   // Start offset measures from the beginning of the line.
   var startOffset = selection.startOffset;
   var node = selection.startNode;
+
+  // If an x-row isn't selected, |node| will be null.
+  if (!node)
+    return null;
 
   if (node.nodeName != 'X-ROW') {
     // If the selection doesn't start on an x-row node, then it must be
@@ -15263,6 +15388,33 @@ hterm.Terminal.prototype.openSelectedUrl_ = function() {
   hterm.openUrl(str);
 };
 
+/**
+ * Manage the automatic mouse hiding behavior while typing.
+ *
+ * @param {boolean=} v Whether to enable automatic hiding.
+ */
+hterm.Terminal.prototype.setAutomaticMouseHiding = function(v=null) {
+  // Since Chrome OS & macOS do this by default everywhere, we don't need to.
+  // Linux & Windows seem to leave this to specific applications to manage.
+  if (v === null)
+    v = (hterm.os != 'cros' && hterm.os != 'mac');
+
+  this.mouseHideWhileTyping_ = !!v;
+};
+
+/**
+ * Handler for monitoring user keyboard activity.
+ *
+ * This isn't for processing the keystrokes directly, but for updating any
+ * state that might toggle based on the user using the keyboard at all.
+ *
+ * @param {KeyboardEvent} e The keyboard event that triggered us.
+ */
+hterm.Terminal.prototype.onKeyboardActivity_ = function(e) {
+  // When the user starts typing, hide the mouse cursor.
+  if (this.mouseHideWhileTyping_ && !this.mouseHideDelay_)
+    this.setCssVar('mouse-cursor-style', 'none');
+};
 
 /**
  * Add the terminalRow and terminalColumn properties to mouse events and
@@ -15289,6 +15441,17 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
       this.vt.mouseReport != this.vt.MOUSE_REPORT_DISABLED);
 
   e.processedByTerminalHandler_ = true;
+
+  // Handle auto hiding of mouse cursor while typing.
+  if (this.mouseHideWhileTyping_ && !this.mouseHideDelay_) {
+    // Make sure the mouse cursor is visible.
+    this.syncMouseStyle();
+    // This debounce isn't perfect, but should work well enough for such a
+    // simple implementation.  If the user moved the mouse, we enabled this
+    // debounce, and then moved the mouse just before the timeout, we wouldn't
+    // debounce that later movement.
+    this.mouseHideDelay_ = setTimeout(() => this.mouseHideDelay_ = null, 1000);
+  }
 
   // One based row/column stored on the mouse event.
   e.terminalRow = parseInt((e.clientY - this.scrollPort_.visibleRowTopMargin) /
@@ -19968,19 +20131,19 @@ lib.resource.add('hterm/images/icon-96', 'image/png;base64',
 );
 
 lib.resource.add('hterm/concat/date', 'text/plain',
-'Thu, 21 Jun 2018 08:45:48 +0000'
+'Mon, 25 Jun 2018 04:53:37 +0000'
 );
 
 lib.resource.add('hterm/changelog/version', 'text/plain',
-'1.79'
+'1.80'
 );
 
 lib.resource.add('hterm/changelog/date', 'text/plain',
-'2018-06-20'
+'2018-06-22'
 );
 
 lib.resource.add('hterm/git/HEAD', 'text/plain',
-'71348ab356506a9c88514a7ee0bc6c3dd696ffad'
+'334625aa41dee698241c5dd745f58a672a8a8e0d'
 );
 
 
@@ -23119,7 +23282,7 @@ hterm.PreferenceManager.categoryDefinitions = [
   { id: hterm.PreferenceManager.categories.Extensions,
     text: 'Extensions'},
   { id: hterm.PreferenceManager.categories.Miscellaneous,
-    text: 'Misc.'}
+    text: 'Miscellaneous'}
 ];
 
 
@@ -23342,6 +23505,10 @@ hterm.PreferenceManager.defaultPreferences = {
      // this shouldn't cause problems.
      'NCURSES_NO_UTF8_ACS': '1',
      'TERM': 'xterm-256color',
+     // Set this env var that a bunch of mainstream terminal emulators set to
+     // indicate we support true colors.
+     // https://gist.github.com/XVilka/8346728
+     'COLORTERM': 'truecolor',
    },
    'value',
    'The initial set of environment variables, as an object.'],
@@ -23363,6 +23530,14 @@ hterm.PreferenceManager.defaultPreferences = {
   'foreground-color':
   [hterm.PreferenceManager.categories.Appearance, 'rgb(240, 240, 240)', 'color',
    'The foreground color for text with no other color attributes.'],
+
+  'hide-mouse-while-typing':
+  [hterm.PreferenceManager.categories.Keyboard, null, 'tristate',
+   'Whether to automatically hide the mouse cursor when typing. ' +
+   'By default, autodetect whether the platform/OS handles this.\n' +
+   '\n' +
+   'Note: Some operating systems may override this setting and thus you ' +
+   'might not be able to always disable it.'],
 
   'home-keys-scroll':
   [hterm.PreferenceManager.categories.Keyboard, false, 'bool',
@@ -24572,7 +24747,10 @@ hterm.Screen.prototype.expandSelectionWithWordBreakMatches_ =
   if (!range || range.toString().match(/\s/))
     return;
 
-  var row = this.getLineStartRow_(this.getXRowAncestor_(range.startContainer));
+  const rowElement = this.getXRowAncestor_(range.startContainer);
+  if (!rowElement)
+    return;
+  const row = this.getLineStartRow_(rowElement);
   if (!row)
     return;
 
@@ -25110,9 +25288,77 @@ hterm.ScrollPort.prototype.decorate = function(div) {
 
   doc.body.addEventListener('keydown', this.onBodyKeyDown_.bind(this));
 
+  // Add buttons to make accessible scrolling through terminal history work
+  // well. These are positioned off-screen until they are selected, at which
+  // point they are moved on-screen.
+  const scrollButtonHeight = 30;
+  const scrollButtonBorder = 1;
+  const scrollButtonTotalHeight = scrollButtonHeight + 2 * scrollButtonBorder;
+  const scrollButtonStyle = `right: 0px;
+                             position:fixed;
+                             z-index: 1;
+                             text-align: center;
+                             cursor: pointer;
+                             height: ${scrollButtonHeight}px;
+                             width: 110px;
+                             line-height: ${scrollButtonHeight}px;
+                             border-width: ${scrollButtonBorder}px;
+                             border-style: solid;
+                             font-weight: bold;`;
+  // Note: we use a <div> rather than a <button> because we don't want it to be
+  // focusable. If it's focusable this interferes with the contenteditable
+  // focus.
+  this.scrollUpButton_ = this.document_.createElement('div');
+  this.scrollUpButton_.id = 'hterm:a11y:page-up';
+  this.scrollUpButton_.innerText = hterm.msg('BUTTON_PAGE_UP', [], 'Page up');
+  this.scrollUpButton_.setAttribute('role', 'button');
+  this.scrollUpButton_.style.cssText = scrollButtonStyle;
+  this.scrollUpButton_.style.top = -scrollButtonTotalHeight + 'px';
+  this.scrollUpButton_.addEventListener('click', () => {
+    const i = this.getTopRowIndex();
+    this.scrollRowToTop(i - this.visibleRowCount + 1);
+  });
+
+  this.scrollDownButton_ = this.document_.createElement('div');
+  this.scrollDownButton_.id = 'hterm:a11y:page-down';
+  this.scrollDownButton_.innerText =
+      hterm.msg('BUTTON_PAGE_DOWN', [], 'Page down');
+  this.scrollDownButton_.setAttribute('role', 'button');
+  this.scrollDownButton_.style.cssText = scrollButtonStyle;
+  this.scrollDownButton_.style.bottom = -scrollButtonTotalHeight + 'px';
+  this.scrollDownButton_.addEventListener('click', () => {
+    const i = this.getTopRowIndex();
+    this.scrollRowToTop(i + this.visibleRowCount - 1);
+  });
+
+  // We only allow the scroll buttons to display after a delay, otherwise the
+  // page up button can flash onto the screen during the intial change in focus.
+  // This seems to be because it is the first element inside the <x-screen>
+  // element, which will get focussed on page load.
+  this.allowScrollButtonsToDisplay_ = false;
+  setTimeout(() => { this.allowScrollButtonsToDisplay_ = true; }, 500);
   this.document_.addEventListener('selectionchange', () => {
     this.selection.sync();
+    if (!this.allowScrollButtonsToDisplay_)
+      return;
+    const selection = this.document_.getSelection();
+    let selectedElement;
+    if (selection.anchorNode && selection.anchorNode.parentElement) {
+      selectedElement = selection.anchorNode.parentElement;
+    }
+    if (selectedElement == this.scrollUpButton_) {
+      this.scrollUpButton_.style.top = '0px';
+    } else {
+      this.scrollUpButton_.style.top = -scrollButtonTotalHeight + 'px';
+    }
+    if (selectedElement == this.scrollDownButton_) {
+      this.scrollDownButton_.style.bottom = '0px';
+    } else {
+      this.scrollDownButton_.style.bottom = -scrollButtonTotalHeight + 'px';
+    }
   });
+
+  this.screen_.appendChild(this.scrollUpButton_);
 
   // This is the main container for the fixed rows.
   this.rowNodes_ = doc.createElement('div');
@@ -25124,6 +25370,8 @@ hterm.ScrollPort.prototype.decorate = function(div) {
       '-webkit-user-select: text;' +
       '-moz-user-select: text;');
   this.screen_.appendChild(this.rowNodes_);
+
+  this.screen_.appendChild(this.scrollDownButton_);
 
   // Two nodes to hold offscreen text during the copy event.
   this.topSelectBag_ = doc.createElement('x-select-bag');
@@ -25264,6 +25512,8 @@ hterm.ScrollPort.prototype.getForegroundColor = function() {
 
 hterm.ScrollPort.prototype.setForegroundColor = function(color) {
   this.screen_.style.color = color;
+  this.scrollUpButton_.style.backgroundColor = color;
+  this.scrollDownButton_.style.backgroundColor = color;
 };
 
 hterm.ScrollPort.prototype.getBackgroundColor = function() {
@@ -25272,6 +25522,8 @@ hterm.ScrollPort.prototype.getBackgroundColor = function() {
 
 hterm.ScrollPort.prototype.setBackgroundColor = function(color) {
   this.screen_.style.backgroundColor = color;
+  this.scrollUpButton_.style.color = color;
+  this.scrollDownButton_.style.color = color;
 };
 
 hterm.ScrollPort.prototype.setBackgroundImage = function(image) {
@@ -25569,6 +25821,21 @@ hterm.ScrollPort.prototype.scheduleRedraw = function() {
 };
 
 /**
+ * Update the state of scroll up/down buttons.
+ *
+ * If the viewport is at the top or bottom row of output, these buttons will
+ * be made transparent and clicking them shouldn't scroll any further.
+ */
+hterm.ScrollPort.prototype.updateScrollButtonState_ = function() {
+  const setButton = (button, disabled) => {
+    button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    button.style.opacity = disabled ? 0.5 : 1;
+  };
+  setButton(this.scrollUpButton_, this.getTopRowIndex() == 0);
+  setButton(this.scrollDownButton_, this.isScrolledEnd);
+};
+
+/**
  * Redraw the current hterm.ScrollPort based on the current scrollbar position.
  *
  * When redrawing, we are careful to make sure that the rows that start or end
@@ -25600,6 +25867,8 @@ hterm.ScrollPort.prototype.redraw_ = function() {
 
   this.isScrolledEnd = (
     this.getTopRowIndex() + this.visibleRowCount >= this.lastRowCount_);
+
+  this.updateScrollButtonState_();
 };
 
 /**
@@ -26433,6 +26702,11 @@ hterm.Terminal = function(opt_profileId) {
   // True if we should override mouse event reporting to allow local selection.
   this.defeatMouseReports_ = false;
 
+  // Whether to auto hide the mouse cursor when typing.
+  this.setAutomaticMouseHiding();
+  // Timer to keep mouse visible while it's being used.
+  this.mouseHideDelay_ = null;
+
   // Terminal bell sound.
   this.bellAudio_ = this.document_.createElement('audio');
   this.bellAudio_.id = 'hterm:bell-audio';
@@ -26759,6 +27033,10 @@ hterm.Terminal.prototype.setProfile = function(profileId, opt_callback) {
 
     'foreground-color': function(v) {
       terminal.setForegroundColor(v);
+    },
+
+    'hide-mouse-while-typing': function(v) {
+      terminal.setAutomaticMouseHiding(v);
     },
 
     'home-keys-scroll': function(v) {
@@ -27797,6 +28075,8 @@ hterm.Terminal.prototype.decorate = function(div) {
   screenNode.addEventListener('mousemove', onMouse);
   this.scrollPort_.onScrollWheel = onMouse;
 
+  screenNode.addEventListener('keydown', this.onKeyboardActivity_.bind(this));
+
   screenNode.addEventListener(
       'focus', this.onFocusChange_.bind(this, true));
   // Listen for mousedown events on the screenNode as in FF the focus
@@ -27835,7 +28115,7 @@ hterm.Terminal.prototype.decorate = function(div) {
        '}' +
        '.uri-node:hover {' +
        '  text-decoration: underline;' +
-       '  cursor: pointer;' +
+       '  cursor: var(--hterm-mouse-cursor-pointer), pointer;' +
        '}' +
        '@keyframes blink {' +
        '  from { opacity: 1.0; }' +
@@ -27848,7 +28128,12 @@ hterm.Terminal.prototype.decorate = function(div) {
        '  animation-timing-function: ease-in-out;' +
        '  animation-direction: alternate;' +
        '}');
-  this.document_.head.appendChild(style);
+  // Insert this stock style as the first node so that any user styles will
+  // override w/out having to use !important everywhere.  The rules above mix
+  // runtime variables with default ones designed to be overridden by the user,
+  // but we can wait for a concrete case from the users to determine the best
+  // way to split the sheet up to before & after the user-css settings.
+  this.document_.head.insertBefore(style, this.document_.head.firstChild);
 
   this.cursorNode_ = this.document_.createElement('div');
   this.cursorNode_.id = 'hterm:terminal-cursor';
@@ -29540,10 +29825,13 @@ hterm.Terminal.prototype.getSelectionText = function() {
   if (selection.isCollapsed)
     return null;
 
-
   // Start offset measures from the beginning of the line.
   var startOffset = selection.startOffset;
   var node = selection.startNode;
+
+  // If an x-row isn't selected, |node| will be null.
+  if (!node)
+    return null;
 
   if (node.nodeName != 'X-ROW') {
     // If the selection doesn't start on an x-row node, then it must be
@@ -29650,6 +29938,33 @@ hterm.Terminal.prototype.openSelectedUrl_ = function() {
   hterm.openUrl(str);
 };
 
+/**
+ * Manage the automatic mouse hiding behavior while typing.
+ *
+ * @param {boolean=} v Whether to enable automatic hiding.
+ */
+hterm.Terminal.prototype.setAutomaticMouseHiding = function(v=null) {
+  // Since Chrome OS & macOS do this by default everywhere, we don't need to.
+  // Linux & Windows seem to leave this to specific applications to manage.
+  if (v === null)
+    v = (hterm.os != 'cros' && hterm.os != 'mac');
+
+  this.mouseHideWhileTyping_ = !!v;
+};
+
+/**
+ * Handler for monitoring user keyboard activity.
+ *
+ * This isn't for processing the keystrokes directly, but for updating any
+ * state that might toggle based on the user using the keyboard at all.
+ *
+ * @param {KeyboardEvent} e The keyboard event that triggered us.
+ */
+hterm.Terminal.prototype.onKeyboardActivity_ = function(e) {
+  // When the user starts typing, hide the mouse cursor.
+  if (this.mouseHideWhileTyping_ && !this.mouseHideDelay_)
+    this.setCssVar('mouse-cursor-style', 'none');
+};
 
 /**
  * Add the terminalRow and terminalColumn properties to mouse events and
@@ -29676,6 +29991,17 @@ hterm.Terminal.prototype.onMouse_ = function(e) {
       this.vt.mouseReport != this.vt.MOUSE_REPORT_DISABLED);
 
   e.processedByTerminalHandler_ = true;
+
+  // Handle auto hiding of mouse cursor while typing.
+  if (this.mouseHideWhileTyping_ && !this.mouseHideDelay_) {
+    // Make sure the mouse cursor is visible.
+    this.syncMouseStyle();
+    // This debounce isn't perfect, but should work well enough for such a
+    // simple implementation.  If the user moved the mouse, we enabled this
+    // debounce, and then moved the mouse just before the timeout, we wouldn't
+    // debounce that later movement.
+    this.mouseHideDelay_ = setTimeout(() => this.mouseHideDelay_ = null, 1000);
+  }
 
   // One based row/column stored on the mouse event.
   e.terminalRow = parseInt((e.clientY - this.scrollPort_.visibleRowTopMargin) /
@@ -34355,19 +34681,19 @@ lib.resource.add('hterm/images/icon-96', 'image/png;base64',
 );
 
 lib.resource.add('hterm/concat/date', 'text/plain',
-'Thu, 21 Jun 2018 08:45:48 +0000'
+'Mon, 25 Jun 2018 04:53:37 +0000'
 );
 
 lib.resource.add('hterm/changelog/version', 'text/plain',
-'1.79'
+'1.80'
 );
 
 lib.resource.add('hterm/changelog/date', 'text/plain',
-'2018-06-20'
+'2018-06-22'
 );
 
 lib.resource.add('hterm/git/HEAD', 'text/plain',
-'71348ab356506a9c88514a7ee0bc6c3dd696ffad'
+'334625aa41dee698241c5dd745f58a672a8a8e0d'
 );
 
 

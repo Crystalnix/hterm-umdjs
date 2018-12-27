@@ -1,6 +1,6 @@
 {
   "name": "hterm-umdjs",
-  "version": "1.2.0+1.80.sha.334625a",
+  "version": "1.2.0+1.82.sha.c57d37e",
   "description": "Chromium's hterm, automatically packaged as a UMD module (CommonJS/AMD/globals)",
   "homepage": "https://github.com/dbkaplun/hterm-umdjs#readme",
   "bugs": "https://github.com/dbkaplun/hterm-umdjs/issues",
